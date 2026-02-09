@@ -15,7 +15,7 @@ def get_latest_news(limit=10):
     Returns:
         list: ニュース記事のリスト [{title, url, summary, keywords}]
     """
-    url = "https://www.oricon.co.jp/news/tag/entertainment/"
+    url = "https://www.oricon.co.jp/news/entertainment/"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
