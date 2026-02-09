@@ -44,39 +44,59 @@ def main():
         
         # 2. オリコンニュース取得
         print("\n[2/6] オリコンニュース取得...")
-        news_items = get_latest_news(limit=5)
+        news_items = get_latest_news(limit=10)
         if not news_items:
             print("ニュースが取得できませんでした")
             return
         
         print(f"取得ニュース: {len(news_items)}件")
-        for i, news in enumerate(news_items[:3], 1):
+        for i, news in enumerate(news_items[:5], 1):
             print(f"  {i}. {news['title'][:50]}...")
+        
+        # 新規ニュースをtrendnewsシートに記録
+        logged_urls = sheets.get_logged_urls()
+        new_news_items = [n for n in news_items if n['url'] not in logged_urls]
+        
+        if new_news_items:
+            print(f"\n新規ニュース {len(new_news_items)}件をtrendnewsに記録...")
+            sheets.log_news_items(new_news_items)
         
         # 投稿済みニュースを除外
         posted_urls = sheets.get_posted_urls()
-        new_items = [n for n in news_items if n['url'] not in posted_urls]
+        unposted_items = [n for n in news_items if n['url'] not in posted_urls]
         
-        if not new_items:
-            print("新規ニュースがありません")
+        if not unposted_items:
+            print("新規ニュースがありません（全て投稿済み）")
             return
         
-        # 最新ニュースを選択
-        selected_news = new_items[0]
-        print(f"\n選択ニュース: {selected_news['title']}")
+        print(f"\n未投稿ニュース: {len(unposted_items)}件")
         
-        # 3. メルカリ商品検索
+        # 3. 各ニュースに対してメルカリ商品を検索
         print("\n[3/6] メルカリ商品検索...")
-        products = find_related_products(selected_news)
         
-        if not products:
-            print("関連商品が見つかりませんでした")
+        selected_news = None
+        selected_product = None
+        
+        for news in unposted_items[:5]:  # 上位5件まで試行
+            print(f"\n検索中: {news['title'][:40]}...")
+            products = find_related_products(news)
+            
+            if products:
+                selected_news = news
+                selected_product = products[0]
+                sheets.update_news_status(news['url'], 'selected', selected_product['title'])
+                break
+            else:
+                sheets.update_news_status(news['url'], 'skipped', '', '商品見つからず')
+                print(f"  → 商品なし、スキップ")
+        
+        if not selected_product:
+            print("全ニュースで関連商品が見つかりませんでした")
             return
         
-        selected_product = products[0]
+        print(f"\n選択ニュース: {selected_news['title']}")
         print(f"選択商品: {selected_product['title'][:50]}...")
         print(f"価格: ¥{selected_product['price']}")
-        print(f"いいね数: {selected_product.get('likes', 0)}")
         
         # 4. 過去の高反応投稿から学習
         print("\n[4/6] 過去データから学習...")
@@ -90,7 +110,7 @@ def main():
             product=selected_product,
             insights=insights
         )
-        print(f"生成投稿: {post_text[:100]}...")
+        print(f"生成投稿:\n{post_text}")
         
         # 6. X投稿
         print("\n[6/6] X投稿...")
@@ -104,7 +124,7 @@ def main():
                 news_url=selected_news['url'],
                 news_title=selected_news['title'],
                 product_title=selected_product['title'],
-                product_url=selected_product['url'],
+                product_url=selected_product.get('affiliate_url', selected_product['url']),
                 product_price=selected_product['price'],
                 post_text=post_text,
                 tweet_id=result['tweet_id']
@@ -112,6 +132,7 @@ def main():
             print("スプレッドシートに記録完了")
         else:
             print(f"投稿失敗: {result['error']}")
+            sheets.update_news_status(selected_news['url'], 'error', '', result['error'])
         
         print("\n" + "=" * 60)
         print(f"Trend-Affi 実行完了: {datetime.now().isoformat()}")

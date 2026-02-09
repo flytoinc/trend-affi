@@ -1,6 +1,6 @@
 """
 Google Sheets管理
-投稿記録・学習データの保存・取得
+投稿記録・ニュースログ・学習データの保存・取得
 """
 import json
 from datetime import datetime
@@ -45,6 +45,7 @@ class SheetsManager:
     def _init_sheets(self):
         """必要なシートを初期化"""
         required_sheets = {
+            'trendnews': ['scraped_at', 'title', 'url', 'keywords', 'status', 'selected_product', 'notes'],
             'posts': ['posted_at', 'news_url', 'news_title', 'product_title', 
                      'product_url', 'product_price', 'post_text', 'tweet_id',
                      'impressions', 'likes', 'retweets', 'replies', 'engagement_rate'],
@@ -64,6 +65,57 @@ class SheetsManager:
                 if not worksheet.row_values(1):
                     worksheet.update('A1', [headers])
     
+    def log_news_items(self, news_items):
+        """
+        取得したニュース記事をログに記録
+        
+        Args:
+            news_items: ニュース記事のリスト
+        """
+        try:
+            worksheet = self.spreadsheet.worksheet('trendnews')
+            
+            for news in news_items:
+                keywords_str = ', '.join(news.get('keywords', []))
+                row = [
+                    datetime.now().isoformat(),
+                    news.get('title', ''),
+                    news.get('url', ''),
+                    keywords_str,
+                    'scraped',  # status
+                    '',  # selected_product
+                    ''   # notes
+                ]
+                worksheet.append_row(row)
+            
+            print(f"trendnewsシートに{len(news_items)}件記録")
+            
+        except Exception as e:
+            print(f"ニュースログ記録エラー: {e}")
+    
+    def update_news_status(self, news_url, status, product_title='', notes=''):
+        """
+        ニュースのステータスを更新
+        
+        Args:
+            news_url: ニュースURL
+            status: 'scraped', 'selected', 'posted', 'skipped'
+            product_title: 選択された商品名
+            notes: メモ
+        """
+        try:
+            worksheet = self.spreadsheet.worksheet('trendnews')
+            records = worksheet.get_all_records()
+            
+            for i, record in enumerate(records, start=2):
+                if record.get('url') == news_url:
+                    worksheet.update(f'E{i}:G{i}', [[status, product_title, notes]])
+                    print(f"ニュースステータス更新: {status}")
+                    return
+            
+        except Exception as e:
+            print(f"ニュースステータス更新エラー: {e}")
+    
     def get_posted_urls(self):
         """投稿済みニュースURLを取得"""
         try:
@@ -72,6 +124,16 @@ class SheetsManager:
             return {r['news_url'] for r in records if r.get('news_url')}
         except Exception as e:
             print(f"投稿済みURL取得エラー: {e}")
+            return set()
+    
+    def get_logged_urls(self):
+        """trendnewsに記録済みのURLを取得"""
+        try:
+            worksheet = self.spreadsheet.worksheet('trendnews')
+            records = worksheet.get_all_records()
+            return {r['url'] for r in records if r.get('url')}
+        except Exception as e:
+            print(f"記録済みURL取得エラー: {e}")
             return set()
     
     def record_post(self, news_url, news_title, product_title, product_url, 
@@ -101,21 +163,20 @@ class SheetsManager:
             worksheet.append_row(row)
             print(f"投稿記録完了: {tweet_id}")
             
+            # trendnewsのステータスも更新
+            self.update_news_status(news_url, 'posted', product_title)
+            
         except Exception as e:
             print(f"投稿記録エラー: {e}")
     
     def get_top_engagement_posts(self, limit=10):
         """
         高エンゲージメント投稿を取得
-        
-        Returns:
-            list: エンゲージメント率順にソートされた投稿リスト
         """
         try:
             worksheet = self.spreadsheet.worksheet('posts')
             records = worksheet.get_all_records()
             
-            # エンゲージメント率でソート
             valid_records = [
                 r for r in records 
                 if r.get('engagement_rate') and float(r.get('engagement_rate', 0)) > 0
@@ -136,19 +197,13 @@ class SheetsManager:
     def update_engagement_metrics(self, tweet_id, metrics):
         """
         エンゲージメントデータを更新
-        
-        Args:
-            tweet_id: ツイートID
-            metrics: {impressions, likes, retweets, replies}
         """
         try:
             worksheet = self.spreadsheet.worksheet('posts')
             records = worksheet.get_all_records()
             
-            # 該当行を探す
-            for i, record in enumerate(records, start=2):  # 2行目から
+            for i, record in enumerate(records, start=2):
                 if str(record.get('tweet_id')) == str(tweet_id):
-                    # エンゲージメント率計算
                     impressions = metrics.get('impressions', 0)
                     if impressions > 0:
                         likes = metrics.get('likes', 0)
@@ -158,7 +213,6 @@ class SheetsManager:
                     else:
                         engagement_rate = 0
                     
-                    # 更新
                     worksheet.update(f'I{i}:M{i}', [[
                         metrics.get('impressions', ''),
                         metrics.get('likes', ''),

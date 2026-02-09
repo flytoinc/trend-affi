@@ -1,71 +1,46 @@
 """
 メルカリ商品検索
-ニュースキーワードから関連商品を検索し、アフィリエイトリンクを生成
+Google検索経由でメルカリ商品を取得（メルカリの動的レンダリング回避）
 """
 import requests
 from bs4 import BeautifulSoup
 import re
 import time
+import os
 
 
 def find_related_products(news_item, limit=5):
     """
     ニュースから関連商品をメルカリで検索
-    
-    Args:
-        news_item: ニュース情報 {title, keywords, ...}
-        limit: 取得件数
-    
-    Returns:
-        list: 商品情報リスト（いいね数・価格でソート済み）
+    Google検索経由で商品を取得
     """
     keywords = news_item.get('keywords', [])
     
     if not keywords:
-        # キーワードがない場合はタイトルから抽出
         keywords = extract_search_words(news_item['title'])
+    
+    print(f"検索キーワード: {keywords}")
     
     all_products = []
     
-    for keyword in keywords[:3]:  # 上位3キーワードで検索
-        # 検索ワードの拡張
-        search_terms = expand_search_terms(keyword)
-        
-        for term in search_terms[:2]:
-            products = search_mercari(term)
-            all_products.extend(products)
-            time.sleep(0.5)  # レート制限対策
+    for keyword in keywords[:2]:  # 上位2キーワード
+        products = search_mercari_via_google(keyword)
+        all_products.extend(products)
+        time.sleep(0.5)
     
     # 重複除去
-    seen_urls = set()
+    seen_ids = set()
     unique_products = []
     for p in all_products:
-        if p['url'] not in seen_urls:
-            seen_urls.add(p['url'])
+        if p['item_id'] not in seen_ids:
+            seen_ids.add(p['item_id'])
             unique_products.append(p)
     
-    # ソート: いいね数×価格の高い順（売れそう&高単価）
-    unique_products.sort(
-        key=lambda x: (x.get('likes', 0) * 10 + x.get('price', 0) / 100),
-        reverse=True
-    )
+    # 価格でソート（高単価優先）
+    unique_products.sort(key=lambda x: x.get('price', 0), reverse=True)
     
+    print(f"メルカリ商品: {len(unique_products)}件取得")
     return unique_products[:limit]
-
-
-def expand_search_terms(keyword):
-    """
-    キーワードを検索用に拡張
-    例: 「山田太郎」→「山田太郎 グッズ」「山田太郎 写真集」等
-    """
-    suffixes = ['グッズ', '写真集', 'CD', 'DVD', 'ポスター', 'クリアファイル', 'アクスタ']
-    
-    terms = [keyword]  # 元のキーワードも含む
-    
-    for suffix in suffixes[:3]:
-        terms.append(f"{keyword} {suffix}")
-    
-    return terms
 
 
 def extract_search_words(title):
@@ -76,105 +51,80 @@ def extract_search_words(title):
         return matches[:2]
     
     # 固有名詞を抽出
-    names = re.findall(r'[ァ-ヶー々\u3400-\u9FFF]{2,6}', title)
-    stopwords = {'ニュース', '発表', '出演', '放送', '公開'}
+    names = re.findall(r'[ァ-ヶー々\u3400-\u9FFF]{2,8}', title)
+    stopwords = {'ニュース', '発表', '出演', '放送', '公開', '話題', '注目', 
+                 '最新', '速報', '映画', 'ドラマ', '番組', 'テレビ'}
     
     return [n for n in names if n not in stopwords][:2]
 
 
-def search_mercari(keyword, limit=10):
+def search_mercari_via_google(keyword, limit=10):
     """
-    メルカリで商品を検索
-    
-    Args:
-        keyword: 検索キーワード
-        limit: 取得件数
-    
-    Returns:
-        list: 商品情報リスト [{title, price, likes, url, affiliate_url}]
+    Google検索経由でメルカリ商品を取得
     """
-    # メルカリ検索URL
-    search_url = f"https://jp.mercari.com/search?keyword={requests.utils.quote(keyword)}&status=on_sale"
+    # site:jp.mercari.com で検索
+    query = f"site:jp.mercari.com/item {keyword}"
+    search_url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=20"
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
     }
     
     try:
-        response = requests.get(search_url, headers=headers, timeout=10)
+        response = requests.get(search_url, headers=headers, timeout=15)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
-        
         products = []
         
-        # 商品リスト取得（セレクタは変更される可能性あり）
-        items = soup.select('[data-testid="item-cell"], li[data-testid], div.items-box')
-        
-        if not items:
-            items = soup.select('a[href*="/item/"]')
-        
-        for item in items[:limit]:
-            try:
-                # URL
-                if item.name == 'a':
-                    link = item
-                else:
-                    link = item.select_one('a[href*="/item/"]')
-                
-                if not link:
-                    continue
-                
-                href = link.get('href', '')
-                if not href.startswith('http'):
-                    href = f"https://jp.mercari.com{href}"
-                
-                # 商品ID抽出
-                item_id_match = re.search(r'/item/([a-zA-Z0-9]+)', href)
-                if not item_id_match:
-                    continue
-                
-                item_id = item_id_match.group(1)
-                
-                # タイトル
-                title_elem = item.select_one('span, p, .item-name')
-                title = title_elem.get_text(strip=True) if title_elem else "商品"
-                
-                # 価格
-                price_elem = item.select_one('[class*="price"], .items-box-price')
-                price_text = price_elem.get_text(strip=True) if price_elem else "0"
-                price = int(re.sub(r'[^\d]', '', price_text) or 0)
-                
-                # いいね数（取得できない場合は0）
-                likes = 0
-                likes_elem = item.select_one('[class*="like"], .items-box-like')
-                if likes_elem:
-                    likes_text = likes_elem.get_text(strip=True)
-                    likes_match = re.search(r'\d+', likes_text)
-                    likes = int(likes_match.group()) if likes_match else 0
-                
-                # アフィリエイトリンク生成
-                affiliate_url = generate_affiliate_url(item_id)
-                
-                products.append({
-                    'title': title[:100],
-                    'price': price,
-                    'likes': likes,
-                    'url': href,
-                    'affiliate_url': affiliate_url,
-                    'item_id': item_id
-                })
-                
-            except Exception as e:
+        # Google検索結果からメルカリURLを抽出
+        for link in soup.select('a[href*="jp.mercari.com/item/"]'):
+            href = link.get('href', '')
+            
+            # GoogleのリダイレクトURLから実際のURLを抽出
+            if '/url?q=' in href:
+                match = re.search(r'/url\?q=(https://jp\.mercari\.com/item/[^&]+)', href)
+                if match:
+                    href = match.group(1)
+            
+            # 商品IDを抽出
+            item_id_match = re.search(r'/item/([a-zA-Z0-9]+)', href)
+            if not item_id_match:
                 continue
+            
+            item_id = item_id_match.group(1)
+            
+            # タイトルを取得
+            title_elem = link.select_one('h3') or link
+            title = title_elem.get_text(strip=True)[:100] if title_elem else "メルカリ商品"
+            
+            # 価格抽出（タイトルから）
+            price = 0
+            price_match = re.search(r'[¥￥]?\s*(\d{1,3}(?:,\d{3})*|\d+)\s*円?', title)
+            if price_match:
+                price = int(price_match.group(1).replace(',', ''))
+            
+            affiliate_url = generate_affiliate_url(item_id)
+            
+            products.append({
+                'title': title,
+                'price': price,
+                'likes': 0,  # Google検索からは取得不可
+                'url': f"https://jp.mercari.com/item/{item_id}",
+                'affiliate_url': affiliate_url,
+                'item_id': item_id
+            })
+            
+            if len(products) >= limit:
+                break
         
-        print(f"メルカリ検索 [{keyword}]: {len(products)}件")
+        print(f"Google検索 [{keyword}]: {len(products)}件")
         return products
         
     except Exception as e:
-        print(f"メルカリ検索エラー [{keyword}]: {e}")
+        print(f"Google検索エラー [{keyword}]: {e}")
         return []
 
 
@@ -182,17 +132,18 @@ def generate_affiliate_url(item_id):
     """
     メルカリアンバサダーのアフィリエイトリンクを生成
     
-    Note: 実際のアンバサダーURLフォーマットに合わせて調整が必要
+    Note: 実際のメルカリアンバサダーURLフォーマットに変更してください
     """
-    # 基本的なアフィリエイトURL形式
-    # 実際のメルカリアンバサダーのリンク形式に変更してください
-    base_url = "https://jp.mercari.com/item/"
+    # メルカリアンバサダーの基本URL形式
+    # 実際のアフィリエイトIDを設定してください
+    ambassador_id = os.environ.get('MERCARI_AMBASSADOR_ID', '')
     
-    # アンバサダーパラメータ（例）
-    # 実際のアフィリエイトIDに変更してください
-    affiliate_param = "?afid=trend_affi"
-    
-    return f"{base_url}{item_id}{affiliate_param}"
+    if ambassador_id:
+        # アンバサダーリンク形式（要確認）
+        return f"https://jp.mercari.com/item/{item_id}?afid={ambassador_id}"
+    else:
+        # 通常のリンク
+        return f"https://jp.mercari.com/item/{item_id}"
 
 
 if __name__ == "__main__":
@@ -205,5 +156,5 @@ if __name__ == "__main__":
     products = find_related_products(test_news)
     for p in products:
         print(f"\n{p['title']}")
-        print(f"  ¥{p['price']} / {p['likes']}いいね")
+        print(f"  ¥{p['price']}")
         print(f"  {p['affiliate_url']}")
