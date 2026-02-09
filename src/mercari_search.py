@@ -131,7 +131,14 @@ def search_mercari_with_playwright(keyword, limit=5):
                     item_id = item_id_match.group(1)
                     
                     # タイトルを取得
-                    title = link.inner_text().strip()[:100]
+                    title = link.inner_text().strip()
+                    
+                    # US$表記を削除
+                    title = title.replace('US$', '').replace('$', '').strip()
+                    # 連続する空白を1つに
+                    title = re.sub(r'\s+', ' ', title)
+                    # 最大100文字
+                    title = title[:100]
                     
                     if not title:
                         title = "メルカリ商品"

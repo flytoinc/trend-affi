@@ -32,34 +32,47 @@ def generate_post(news, product, insights=""):
         )
     )
     
-    prompt = f"""あなたはX（Twitter）で話題のエンタメ情報を発信する人気アカウントです。
-以下のニュースと商品情報から、反応が良くなる投稿を作成してください。
+    prompt = f"""あなたはメルカリ公式のエンタメトレンド情報を発信するアカウントです。
+以下のニュースと商品情報から、トレンドに注目している人に見つけてもらえる投稿を作成してください。
 
 【ニュース】
 タイトル: {news['title']}
+キーワード: {', '.join(news.get('keywords', [])[:3])}
 
 【商品】
 商品名: {product['title']}
-価格: ¥{product['price']}
+価格: ¥{product['price']:,}
 
 【過去の高反応投稿の傾向】
 {insights if insights else "特になし"}
 
-【投稿ルール】
-1. 読んだ人が思わず反応したくなる内容
-2. ニュースの話題と商品を自然につなげる
-3. 文字数: 100〜130文字（URLは別で追加されます）
-4. 一人称で、感情や本音を込める
-5. 読点（、）でつなげて自然な文に
-6. 絵文字は1〜2個まで
-7. ハッシュタグは最後に1〜2個
+【投稿フォーマット】
+1行目: ヘッダーメッセージ（公式ぽい × 一人称、30-50文字）
+2行目: 空行
+3行目: 商品名（そのまま）
+4行目: 価格（¥表記のみ、US$不要）
+5行目: 空行
+6行目: 「あの日の思い出も、メルカリで」（固定）
+7行目: 空行
+8行目: ハッシュタグ（トレンドに関連する2-3個）
 
-【禁止】
+【ヘッダーメッセージのルール】
+- トレンドに注目している人の興味を引く
+- 公式感がありつつ親しみやすい一人称
+- 絵文字は1個まで
+- 「おすすめ」「お得」などの直接的な売り込みは禁止
+
+【ハッシュタグのルール】
+- ニュースのキーワードから2-3個選ぶ
+- トレンド検索で見つけてもらいやすいもの
+- 例: #仲間由紀恵 #震災15年 #美女と男子
+
+【禁止事項】
+- US$表記
 - 宣伝臭い表現
 - 命令口調
-- 「おすすめ」「お得」などの直接的な売り込み
 
-出力: 投稿文のみ"""
+出力: 投稿文のみ（URLは別で追加されます）"""
 
     try:
         response = model.generate_content(prompt)
@@ -85,23 +98,32 @@ def generate_post(news, product, insights=""):
 
 def _template_post(news, product):
     """フォールバック用テンプレート投稿"""
+    keyword = news['keywords'][0] if news.get('keywords') else "エンタメ"
+    keywords = news.get('keywords', ['エンタメ'])[:3]
+    
+    # ハッシュタグ生成
+    hashtags = ' '.join([f'#{kw}' for kw in keywords[:2]])
+    
+    # 商品名からUS$表記を削除
+    product_title = product['title'].replace('US$', '').replace('$', '').strip()
+    # 連続する空白を1つに
+    import re
+    product_title = re.sub(r'\s+', ' ', product_title)
+    
     templates = [
-        "話題の{keyword}関連、これ見つけた👀\n\n{product_title}\n¥{price}\n\n{url}",
-        "{keyword}のニュース見て、つい関連グッズ探しちゃった✨\n\n{product_title}\n\n{url}",
-        "今話題の{keyword}！ファンなら気になるかも？\n\n{product_title}\n¥{price}\n\n{url}",
+        f"話題の{keyword}、メルカリで見つけました✨\n\n{product_title}\n¥{product['price']:,}\n\nあの日の思い出も、メルカリで\n\n{hashtags}",
+        f"{keyword}のニュース見て気になって探してみた\n\n{product_title}\n¥{product['price']:,}\n\nあの日の思い出も、メルカリで\n\n{hashtags}",
+        f"今話題の{keyword}関連グッズ\n\n{product_title}\n¥{product['price']:,}\n\nあの日の思い出も、メルカリで\n\n{hashtags}",
     ]
     
     import random
-    template = random.choice(templates)
+    post_text = random.choice(templates)
     
-    keyword = news['keywords'][0] if news.get('keywords') else "エンタメ"
+    # URLを追加
+    if product.get('affiliate_url'):
+        post_text = f"{post_text}\n\n{product['affiliate_url']}"
     
-    return template.format(
-        keyword=keyword,
-        product_title=product['title'][:30],
-        price=product['price'],
-        url=product.get('affiliate_url', product['url'])
-    )
+    return post_text
 
 
 if __name__ == "__main__":
