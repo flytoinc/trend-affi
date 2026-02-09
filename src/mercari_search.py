@@ -103,12 +103,12 @@ def search_mercari_with_playwright(keyword, limit=5):
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             
-            # ページ遷移
-            page.goto(search_url, wait_until='networkidle', timeout=30000)
+            # ページ遷移（タイムアウト延長、待機戦略変更）
+            page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
             
             # 商品リンクが表示されるまで待機
             try:
-                page.wait_for_selector('a[href^="/item/m"]', timeout=10000)
+                page.wait_for_selector('a[href^="/item/m"]', timeout=15000)
             except PlaywrightTimeoutError:
                 print(f"  → 商品が見つかりませんでした")
                 browser.close()
