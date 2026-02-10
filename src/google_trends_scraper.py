@@ -53,19 +53,40 @@ def get_trending_topics(limit=10):
                     # 行をクリックしてサイドバーを開く
                     row.click()
                     
-                    # サイドバーのニューストピックを待機
+                    # サイドバーのニューストピックを待機（タイムアウトを10秒に延長）
                     try:
-                        page.wait_for_selector('div.jDtQ5', timeout=5000)
+                        page.wait_for_selector('div.jDtQ5', timeout=10000)
                         
-                        # ニューストピックのタイトルを取得（理由として使用）
-                        news_elem = page.query_selector('div.jDtQ5')
-                        news_title = news_elem.inner_text().strip() if news_elem else ""
+                        # 複数のニューストピックのタイトルを取得
+                        news_elems = page.query_selector_all('div.jDtQ5')
+                        article_titles = []
                         
-                        trends.append({
-                            'name': trend_name,
-                            'traffic': '',
-                            'articles': [{'title': news_title, 'url': ''}] if news_title else []
-                        })
+                        for news_elem in news_elems[:5]:  # 最大5件取得
+                            title = news_elem.inner_text().strip()
+                            if title:
+                                article_titles.append(title)
+                        
+                        # 記事タイトルがある場合
+                        if article_titles:
+                            # 最も長いタイトルを選択（50文字以上を優先）
+                            long_titles = [t for t in article_titles if len(t) >= 50]
+                            if long_titles:
+                                best_title = max(long_titles, key=len)
+                            else:
+                                best_title = max(article_titles, key=len)
+                            
+                            trends.append({
+                                'name': trend_name,
+                                'traffic': '',
+                                'articles': [{'title': best_title, 'url': ''}]
+                            })
+                        else:
+                            # タイトルが取得できない場合
+                            trends.append({
+                                'name': trend_name,
+                                'traffic': '',
+                                'articles': []
+                            })
                         
                     except PlaywrightTimeoutError:
                         # ニューストピックがない場合
@@ -96,4 +117,5 @@ if __name__ == "__main__":
         print(f"\n{i}. {trend['name']}")
         print(f"   Articles: {len(trend['articles'])}件")
         if trend['articles']:
-            print(f"   Reason: {trend['articles'][0]['title'][:50]}...")
+            title = trend['articles'][0]['title']
+            print(f"   Reason ({len(title)}文字): {title[:80]}...")
