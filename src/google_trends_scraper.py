@@ -28,46 +28,52 @@ def get_trending_topics(limit=10):
             # ページ遷移
             page.goto(url, wait_until='domcontentloaded', timeout=60000)
             
-            # トレンド要素が表示されるまで待機
+            # トレンド行が表示されるまで待機
             try:
-                page.wait_for_selector('.feed-item', timeout=15000)
+                page.wait_for_selector('tr.enOdEe-wZVHld-xMbwt', timeout=15000)
             except PlaywrightTimeoutError:
                 print("  → トレンドが見つかりませんでした")
                 browser.close()
                 return []
             
-            # トレンド要素を取得
-            trend_elements = page.query_selector_all('.feed-item')
+            # トレンド行を取得
+            trend_rows = page.query_selector_all('tr.enOdEe-wZVHld-xMbwt')
             
             trends = []
             
-            for elem in trend_elements[:limit]:
+            for i, row in enumerate(trend_rows[:limit]):
                 try:
-                    # トレンド名を取得
-                    title_elem = elem.query_selector('.title a')
-                    if not title_elem:
+                    # トレンド名を取得（2列目のdiv）
+                    name_elem = row.query_selector('td:nth-child(2) div.mZ3RIc')
+                    if not name_elem:
                         continue
                     
-                    trend_name = title_elem.inner_text().strip()
+                    trend_name = name_elem.inner_text().strip()
                     
-                    # トラフィック情報を取得
-                    traffic_elem = elem.query_selector('.summary-text')
-                    traffic = traffic_elem.inner_text().strip() if traffic_elem else ""
+                    # 行をクリックしてサイドバーを開く
+                    row.click()
                     
-                    # 関連記事リンクを取得（理由調査用）
-                    article_links = []
-                    article_elems = elem.query_selector_all('.article-title a')
-                    for article in article_elems[:3]:
-                        article_links.append({
-                            'title': article.inner_text().strip(),
-                            'url': article.get_attribute('href')
+                    # サイドバーのニューストピックを待機
+                    try:
+                        page.wait_for_selector('div.jDtQ5', timeout=5000)
+                        
+                        # ニューストピックのタイトルを取得（理由として使用）
+                        news_elem = page.query_selector('div.jDtQ5')
+                        news_title = news_elem.inner_text().strip() if news_elem else ""
+                        
+                        trends.append({
+                            'name': trend_name,
+                            'traffic': '',
+                            'articles': [{'title': news_title, 'url': ''}] if news_title else []
                         })
-                    
-                    trends.append({
-                        'name': trend_name,
-                        'traffic': traffic,
-                        'articles': article_links
-                    })
+                        
+                    except PlaywrightTimeoutError:
+                        # ニューストピックがない場合
+                        trends.append({
+                            'name': trend_name,
+                            'traffic': '',
+                            'articles': []
+                        })
                     
                 except Exception as e:
                     print(f"  トレンドパースエラー: {e}")
@@ -88,5 +94,6 @@ if __name__ == "__main__":
     trends = get_trending_topics(5)
     for i, trend in enumerate(trends, 1):
         print(f"\n{i}. {trend['name']}")
-        print(f"   Traffic: {trend['traffic']}")
         print(f"   Articles: {len(trend['articles'])}件")
+        if trend['articles']:
+            print(f"   Reason: {trend['articles'][0]['title'][:50]}...")
