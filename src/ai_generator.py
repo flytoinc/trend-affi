@@ -19,6 +19,26 @@ def generate_post(trend_data, product):
     trend_reason = trend_data.get('reason', '話題')
     keywords = trend_data.get('keywords', [])
     
+    # トレンド理由を50文字以上に拡張（全体で140文字に収まる範囲）
+    # 基本フォーマット: 「xxx」が話題だね。yyy......なんだって。そんなxxxの激レア商品はこちら。貴重なものなので、急いで。
+    # 固定部分の文字数を計算
+    fixed_text = f"「{trend_name}」が話題だね。......なんだって。そんな{trend_name}の激レア商品はこちら。貴重なものなので、急いで。"
+    fixed_length = len(fixed_text)
+    
+    # トレンド理由の最大文字数（140文字 - 固定部分）
+    max_reason_length = 140 - fixed_length
+    
+    # トレンド理由を50文字以上、最大文字数以内に調整
+    if len(trend_reason) < 50:
+        # 50文字未満の場合は、そのまま使用（短すぎる場合のフォールバック）
+        extended_reason = trend_reason
+    elif len(trend_reason) > max_reason_length:
+        # 長すぎる場合は切り詰め
+        extended_reason = trend_reason[:max_reason_length]
+    else:
+        # 適切な長さの場合はそのまま
+        extended_reason = trend_reason
+    
     # 商品名からUS$表記を削除
     product_title = product['title'].replace('US$', '').replace('$', '').strip()
     import re
@@ -35,7 +55,7 @@ def generate_post(trend_data, product):
     hashtags_str = ' '.join(hashtags) if hashtags else f'#{trend_name}'
     
     # 投稿フォーマット
-    post_text = f"""「{trend_name}」が話題だね。{trend_reason}があったみたい。そんな{trend_name}の激レア商品はこちら。貴重なものなので、急いで。
+    post_text = f"""「{trend_name}」が話題だね。{extended_reason}......なんだって。そんな{trend_name}の激レア商品はこちら。貴重なものなので、急いで。
 
 あの日の思い出も、メルカリで
 

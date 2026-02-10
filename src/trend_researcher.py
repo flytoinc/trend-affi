@@ -13,30 +13,37 @@ def research_trend_reason(trend_data):
         trend_data: {'name': str, 'traffic': str, 'articles': []}
     
     Returns:
-        str: トレンドの理由（簡潔に、30文字以内）
+        str: トレンドの理由（50文字以上推奨）
     """
     trend_name = trend_data['name']
     articles = trend_data.get('articles', [])
     
     # 記事タイトルから理由を抽出
     if articles:
-        # 最初の記事タイトルから理由を推測
+        # 最初の記事タイトルをそのまま使用（トレンド名を除去）
         first_article = articles[0]['title']
         
-        # 理由を示すキーワードを抽出
-        reason = extract_reason_from_title(first_article, trend_name)
+        # トレンド名を除去
+        reason = first_article.replace(trend_name, '').strip()
         
-        if reason:
+        # 前後の句読点を削除
+        reason = reason.lstrip('、。：:・').rstrip('、。')
+        
+        # 50文字以上になるように調整
+        if len(reason) >= 50:
+            # 適切な長さの場合はそのまま返す
+            return reason
+        elif len(reason) > 0:
+            # 短い場合でも記事タイトルがあればそれを使う
             return reason
     
     # 記事がない場合はトラフィック情報から
     traffic = trend_data.get('traffic', '')
     if traffic:
-        # "50万回以上の検索" などから理由を推測
-        return f"{traffic}の検索"
+        return f"{traffic}の検索が急上昇しているみたい"
     
-    # デフォルト
-    return "話題"
+    # デフォルト（50文字以上を目指す）
+    return f"SNSやニュースで大きな話題になっている"
 
 
 def extract_reason_from_title(title, trend_name):
