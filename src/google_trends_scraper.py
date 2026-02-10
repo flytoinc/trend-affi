@@ -62,9 +62,11 @@ def get_trending_topics(limit=10):
                         article_titles = []
                         
                         for news_elem in news_elems[:5]:  # 最大5件取得
-                            title = news_elem.inner_text().strip()
-                            if title:
-                                article_titles.append(title)
+                            full_text = news_elem.inner_text().strip()
+                            # 最初の行のみを取得（メタ情報を除外）
+                            first_line = full_text.split('\n')[0].strip()
+                            if first_line:
+                                article_titles.append(first_line)
                         
                         # 記事タイトルがある場合
                         if article_titles:

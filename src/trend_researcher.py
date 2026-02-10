@@ -26,8 +26,8 @@ def research_trend_reason(trend_data):
         # トレンド名を除去
         reason = first_article.replace(trend_name, '').strip()
         
-        # 前後の句読点を削除
-        reason = reason.lstrip('、。：:・').rstrip('、。')
+        # 不要なメタ情報を削除
+        reason = clean_article_title(reason)
         
         # 50文字以上になるように調整
         if len(reason) >= 50:
@@ -44,6 +44,46 @@ def research_trend_reason(trend_data):
     
     # デフォルト（50文字以上を目指す）
     return f"SNSやニュースで大きな話題になっている"
+
+
+def clean_article_title(title):
+    """
+    記事タイトルから不要なメタ情報を削除
+    
+    Args:
+        title: 記事タイトル
+    
+    Returns:
+        str: クリーンなタイトル
+    """
+    # 改行を削除
+    title = title.replace('\n', ' ')
+    
+    # ソース名のパターンを削除（括弧内）
+    # 例: （スポニチアネックス）、（Yahoo!ニュース）
+    title = re.sub(r'[（(][^）)]*[）)]', '', title)
+    
+    # 時間情報を削除
+    # 例: "50 分前 ●"、"2 時間前 ●"、"昨日 ●"
+    title = re.sub(r'\d+\s*[分時日]前\s*[●・]', '', title)
+    title = re.sub(r'昨日\s*[●・]', '', title)
+    
+    # ニュースソース名を削除
+    # 例: "Yahoo!ニュース"、"ABEMA TIMES"
+    title = re.sub(r'Yahoo!ニュース', '', title)
+    title = re.sub(r'[A-Za-z\s]+TIMES', '', title)
+    title = re.sub(r'スポニチアネックス', '', title)
+    title = re.sub(r'日本テレビ', '', title)
+    title = re.sub(r'RBC琉球放送', '', title)
+    title = re.sub(r'リアルサウンド', '', title)
+    
+    # 連続する空白を1つに
+    title = re.sub(r'\s+', ' ', title)
+    
+    # 前後の句読点や空白を削除
+    title = title.strip('、。：:・ \t')
+    
+    return title
 
 
 def extract_reason_from_title(title, trend_name):
