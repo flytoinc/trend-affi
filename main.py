@@ -1,10 +1,13 @@
 """
 Trend-Affi: 自律型エンタメアフィリエイト・マーケター
-Google Trends → メルカリ商品選定 → 投稿生成 → X投稿（2件）
+Google Trends → メルカリ商品選定 → 投稿生成 → X投稿（1件）
+シャドウバン回避: ランダム遅延、投稿数削減
 """
 import os
 import sys
 import traceback
+import random
+import time
 from datetime import datetime
 
 from src.google_trends_scraper import get_trending_topics
@@ -34,6 +37,12 @@ def main():
         sys.exit(1)
     
     try:
+        # シャドウバン回避: ランダム遅延（0-30分）
+        delay_minutes = random.randint(0, 30)
+        delay_seconds = delay_minutes * 60
+        print(f"\n⏰ シャドウバン回避のため{delay_minutes}分待機...")
+        time.sleep(delay_seconds)
+        
         # 1. Google Sheets接続
         print("\n[1/5] Google Sheets接続...")
         sheets = SheetsManager(
@@ -65,9 +74,9 @@ def main():
         
         print(f"未投稿トレンド: {len(new_trends)}件")
         
-        # 上位2件のトレンドを処理
+        # 上位1件のトレンドを処理（シャドウバン回避）
         posts_count = 0
-        target_count = 2
+        target_count = 1  # 2件 → 1件に削減
         
         for trend in new_trends[:5]:  # 最大5件まで試行
             if posts_count >= target_count:
