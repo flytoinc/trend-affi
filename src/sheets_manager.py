@@ -45,7 +45,7 @@ class SheetsManager:
     def _init_sheets(self):
         """必要なシートを初期化"""
         required_sheets = {
-            'trendnews': ['scraped_at', 'title', 'url', 'keywords', 'status', 'selected_product', 'notes'],
+            'trendnews': ['scraped_at', 'trend_name', 'trend_reason', 'title', 'url', 'keywords', 'status', 'selected_product', 'notes'],
             'posts': ['posted_at', 'news_url', 'news_title', 'product_title', 
                      'product_url', 'product_price', 'post_text', 'tweet_id',
                      'impressions', 'likes', 'retweets', 'replies', 'engagement_rate'],
@@ -67,7 +67,7 @@ class SheetsManager:
     
     def log_news_items(self, news_items):
         """
-        取得したニュース記事をログに記録
+        取得したトレンド/ニュース記事をログに記録
         
         Args:
             news_items: ニュース記事のリスト
@@ -79,6 +79,8 @@ class SheetsManager:
                 keywords_str = ', '.join(news.get('keywords', []))
                 row = [
                     datetime.now().isoformat(),
+                    news.get('trend_name', ''),  # トレンド名
+                    news.get('trend_reason', ''),  # トレンド理由
                     news.get('title', ''),
                     news.get('url', ''),
                     keywords_str,
@@ -228,6 +230,48 @@ class SheetsManager:
             
         except Exception as e:
             print(f"メトリクス更新エラー: {e}")
+
+
+    
+    def get_recent_trends(self, hours=48):
+        """
+        過去N時間以内に投稿したトレンド名を取得
+        
+        Args:
+            hours: 何時間前までを対象とするか
+        
+        Returns:
+            set: トレンド名のセット
+        """
+        try:
+            from datetime import timedelta
+            
+            worksheet = self.spreadsheet.worksheet('trendnews')
+            records = worksheet.get_all_records()
+            
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            recent_trends = set()
+            
+            for record in records:
+                scraped_at_str = record.get('scraped_at', '')
+                trend_name = record.get('trend_name', '')
+                
+                if not scraped_at_str or not trend_name:
+                    continue
+                
+                try:
+                    scraped_at = datetime.fromisoformat(scraped_at_str)
+                    if scraped_at >= cutoff_time:
+                        recent_trends.add(trend_name)
+                except:
+                    continue
+            
+            print(f"過去{hours}時間のトレンド: {len(recent_trends)}件")
+            return recent_trends
+            
+        except Exception as e:
+            print(f"過去トレンド取得エラー: {e}")
+            return set()
 
 
 if __name__ == "__main__":
