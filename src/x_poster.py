@@ -1,10 +1,13 @@
 """
 X（Twitter）投稿機能
 tweepyを使用してX APIで投稿
+画像添付対応: 商品画像をダウンロード→アップロード→添付投稿
 403エラー対策: リトライロジック、詳細エラーログ、重複検出
 """
 import os
 import time
+import tempfile
+import requests
 import tweepy
 
 
@@ -131,6 +134,133 @@ def post_to_x(text, max_retries=3):
         }
 
 
+def _download_image(image_url, timeout=15):
+    """
+    画像URLからファイルをダウンロードし一時ファイルに保存
+    
+    Args:
+        image_url: 画像URL
+        timeout: タイムアウト秒
+    
+    Returns:
+        str or None: 一時ファイルパス（失敗時None）
+    """
+    try:
+        response = requests.get(image_url, timeout=timeout, headers={
+            'User-Agent': 'Mozilla/5.0'
+        })
+        response.raise_for_status()
+        
+        # Content-Typeから拡張子を判定
+        content_type = response.headers.get('Content-Type', '')
+        if 'png' in content_type:
+            ext = '.png'
+        elif 'gif' in content_type:
+            ext = '.gif'
+        elif 'webp' in content_type:
+            ext = '.webp'
+        else:
+            ext = '.jpg'
+        
+        tmp_file = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+        tmp_file.write(response.content)
+        tmp_file.close()
+        
+        return tmp_file.name
+        
+    except Exception as e:
+        print(f"  画像ダウンロードエラー: {e}")
+        return None
+
+
+def post_to_x_with_image(text, image_url, max_retries=3):
+    """
+    画像付きでXに投稿する
+    画像アップロード失敗時はテキストのみで投稿
+    
+    Args:
+        text: 投稿テキスト
+        image_url: 商品画像のURL
+        max_retries: 最大リトライ回数
+    
+    Returns:
+        dict: {success: bool, tweet_id: str, error: str}
+    """
+    if not image_url:
+        return post_to_x(text, max_retries=max_retries)
+    
+    try:
+        api_key = os.environ.get('X_API_KEY')
+        api_secret = os.environ.get('X_API_SECRET')
+        access_token = os.environ.get('X_ACCESS_TOKEN')
+        access_secret = os.environ.get('X_ACCESS_TOKEN_SECRET')
+        
+        if not all([api_key, api_secret, access_token, access_secret]):
+            return post_to_x(text, max_retries=max_retries)
+        
+        # 画像をダウンロード
+        print(f"  画像ダウンロード中: {image_url[:80]}...")
+        image_path = _download_image(image_url)
+        
+        if not image_path:
+            print("  → 画像取得失敗、テキストのみで投稿")
+            return post_to_x(text, max_retries=max_retries)
+        
+        try:
+            # v1.1 API で画像アップロード（media_upload は v1.1 のみ）
+            auth = tweepy.OAuth1UserHandler(
+                api_key, api_secret, access_token, access_secret
+            )
+            api_v1 = tweepy.API(auth)
+            
+            media = api_v1.media_upload(filename=image_path)
+            media_id = media.media_id
+            
+            print(f"  画像アップロード成功: media_id={media_id}")
+            
+            # v2 Client で画像付き投稿
+            client = tweepy.Client(
+                consumer_key=api_key,
+                consumer_secret=api_secret,
+                access_token=access_token,
+                access_token_secret=access_secret
+            )
+            
+            for attempt in range(max_retries):
+                try:
+                    response = client.create_tweet(
+                        text=text,
+                        media_ids=[media_id]
+                    )
+                    tweet_id = response.data['id']
+                    print(f"  画像付き投稿成功! Tweet ID: {tweet_id}")
+                    return {
+                        'success': True,
+                        'tweet_id': tweet_id,
+                        'error': None
+                    }
+                except tweepy.TweepyException as e:
+                    error_msg = str(e)
+                    print(f"  画像付き投稿エラー (attempt {attempt + 1}): {error_msg}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                    else:
+                        # 画像付きが失敗したらテキストのみで再試行
+                        print("  → 画像付き投稿失敗、テキストのみで再試行")
+                        return post_to_x(text, max_retries=1)
+            
+        finally:
+            # 一時ファイルを削除
+            try:
+                os.unlink(image_path)
+            except:
+                pass
+        
+    except Exception as e:
+        print(f"  画像投稿エラー: {e}、テキストのみで投稿")
+        return post_to_x(text, max_retries=max_retries)
+
+
 def get_tweet_metrics(tweet_id):
     """
     投稿のエンゲージメントデータを取得
@@ -174,6 +304,87 @@ def get_tweet_metrics(tweet_id):
     except Exception as e:
         print(f"メトリクス取得エラー: {e}")
         return None
+
+
+def quote_retweet(text, quote_tweet_id, max_retries=3):
+    """
+    引用リツイートを投稿する
+    
+    Args:
+        text: 引用コメント
+        quote_tweet_id: 引用する元ツイートのID
+        max_retries: 最大リトライ回数
+    
+    Returns:
+        dict: {success: bool, tweet_id: str, error: str}
+    """
+    try:
+        api_key = os.environ.get('X_API_KEY')
+        api_secret = os.environ.get('X_API_SECRET')
+        access_token = os.environ.get('X_ACCESS_TOKEN')
+        access_secret = os.environ.get('X_ACCESS_TOKEN_SECRET')
+        
+        if not all([api_key, api_secret, access_token, access_secret]):
+            return {
+                'success': False,
+                'tweet_id': None,
+                'error': 'Missing X API credentials'
+            }
+        
+        client = tweepy.Client(
+            consumer_key=api_key,
+            consumer_secret=api_secret,
+            access_token=access_token,
+            access_token_secret=access_secret
+        )
+        
+        for attempt in range(max_retries):
+            try:
+                response = client.create_tweet(
+                    text=text,
+                    quote_tweet_id=quote_tweet_id
+                )
+                
+                tweet_id = response.data['id']
+                print(f"引用RT成功: ID={tweet_id}")
+                
+                return {
+                    'success': True,
+                    'tweet_id': tweet_id,
+                    'error': None
+                }
+                
+            except tweepy.TweepyException as e:
+                error_msg = str(e)
+                print(f"引用RTエラー (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                
+                if '403' in error_msg:
+                    print("  → 403 Forbidden。30秒待機して再試行...")
+                    time.sleep(30)
+                elif '429' in error_msg:
+                    print("  → レート制限。60秒待機して再試行...")
+                    time.sleep(60)
+                elif '187' in error_msg:
+                    return {
+                        'success': False,
+                        'tweet_id': None,
+                        'error': 'Status is a duplicate'
+                    }
+                else:
+                    time.sleep(10)
+        
+        return {
+            'success': False,
+            'tweet_id': None,
+            'error': f'Max retries ({max_retries}) exceeded'
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'tweet_id': None,
+            'error': str(e)
+        }
 
 
 if __name__ == "__main__":

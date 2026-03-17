@@ -1,70 +1,162 @@
 """
 トレンド理由調査
-トレンドがなぜ話題なのかを調査
+Gemini APIを使用してトレンドの背景・理由をリアルタイムに調査
 """
+import os
 import re
+import random
 
 
 def research_trend_reason(trend_data):
     """
-    トレンドがなぜ話題なのかを調査
+    トレンドがなぜ話題なのかをGemini APIで調査
     
     Args:
         trend_data: {'name': str, 'traffic': str, 'articles': []}
     
     Returns:
-        str: トレンドの理由（50文字以上推奨）
+        str: トレンドの理由（具体的な内容）
     """
     trend_name = trend_data['name']
     articles = trend_data.get('articles', [])
     
-    # 記事タイトルから理由を抽出
+    # 記事タイトルがある場合はそこから理由を抽出
     if articles:
-        # 最初の記事タイトルをそのまま使用（トレンド名を除去）
         first_article = articles[0]['title']
-        
-        # トレンド名を除去
         reason = first_article.replace(trend_name, '').strip()
-        
-        # 不要なメタ情報を削除
         reason = clean_article_title(reason)
-        
-        # 50文字以上になるように調整
-        if len(reason) >= 50:
-            # 適切な長さの場合はそのまま返す
-            return reason
-        elif len(reason) > 0:
-            # 短い場合でも記事タイトルがあればそれを使う
+        if len(reason) >= 15:
             return reason
     
-    # 記事がない場合はトラフィック情報から
+    # Gemini APIで調査
+    reason = _research_with_gemini(trend_name)
+    if reason:
+        return reason
+    
+    # Gemini APIが使えない場合のフォールバック
     traffic = trend_data.get('traffic', '')
     if traffic:
         return f"{traffic}の検索が急上昇しているみたい"
     
-    # デフォルト（50文字以上を目指す）- 20パターンからランダム選択
-    import random
+    return _get_fallback_reason()
+
+
+def _research_with_gemini(trend_name):
+    """
+    Gemini APIでトレンドの理由をリアルタイム調査
+    Google Searchツール（grounding）を使用
+    """
+    try:
+        import google.generativeai as genai
+        
+        api_key = os.environ.get('GEMINI_API_KEY')
+        if not api_key:
+            return None
+        
+        genai.configure(api_key=api_key)
+        
+        # Google Search grounding を使用してリアルタイム情報を取得
+        model = genai.GenerativeModel(
+            'gemini-2.0-flash',
+            tools='google_search_retrieval'
+        )
+        
+        prompt = f"""「{trend_name}」が今X(Twitter)やGoogleでトレンド入りしています。
+なぜ話題になっているのか、具体的な理由を1〜2文で簡潔に教えてください。
+
+【ルール】
+1. 50〜100文字程度で
+2. 具体的な出来事・ニュースに基づくこと
+3. 「〜とのこと」「〜らしい」のような伝聞調で
+4. 理由のみを出力（余計な前置き不要）
+
+理由:"""
+        
+        response = model.generate_content(prompt)
+        reason = response.text.strip()
+        
+        # 不要なプレフィックスを除去
+        reason = re.sub(r'^理由[:：]\s*', '', reason)
+        reason = reason.strip('"\'「」')
+        
+        # 長すぎる場合はトリム
+        if len(reason) > 150:
+            # 文末を探してカット
+            cut_pos = reason[:150].rfind('。')
+            if cut_pos > 50:
+                reason = reason[:cut_pos + 1]
+            else:
+                reason = reason[:148] + '…'
+        
+        if len(reason) >= 10:
+            print(f"  Gemini調査結果: {reason}")
+            return reason
+        
+        return None
+        
+    except Exception as e:
+        print(f"  Geminiトレンド調査エラー: {e}")
+        # google_search_retrieval が使えない場合、通常モデルで試行
+        return _research_with_gemini_fallback(trend_name)
+
+
+def _research_with_gemini_fallback(trend_name):
+    """
+    Google Search grounding が使えない場合のフォールバック
+    通常のGeminiモデルでトレンド理由を推定
+    """
+    try:
+        import google.generativeai as genai
+        
+        api_key = os.environ.get('GEMINI_API_KEY')
+        if not api_key:
+            return None
+        
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        
+        prompt = f"""「{trend_name}」がトレンド入りしている理由を推測してください。
+この人物・キーワードについての一般的な知識から、今話題になりうる理由を1〜2文で述べてください。
+50〜100文字程度で、「〜とのこと」「〜らしい」のような伝聞調で。
+理由のみを出力してください。
+
+理由:"""
+        
+        response = model.generate_content(prompt)
+        reason = response.text.strip()
+        reason = re.sub(r'^理由[:：]\s*', '', reason)
+        reason = reason.strip('"\'「」')
+        
+        if len(reason) > 150:
+            cut_pos = reason[:150].rfind('。')
+            if cut_pos > 50:
+                reason = reason[:cut_pos + 1]
+            else:
+                reason = reason[:148] + '…'
+        
+        if len(reason) >= 10:
+            return reason
+        
+        return None
+        
+    except Exception as e:
+        print(f"  Geminiフォールバック調査エラー: {e}")
+        return None
+
+
+def _get_fallback_reason():
+    """Gemini APIが使えない場合のフォールバック理由"""
     default_reasons = [
         "SNSやニュースで大きな話題になっている",
         "各メディアで取り上げられて注目を集めている",
         "ネットで急速に拡散されて話題沸騰中",
         "多くの人が検索していて注目度が高い",
         "今まさに旬な話題として盛り上がっている",
-        "各所で話題になっていて見逃せない",
         "ソーシャルメディアを中心に大きな反響",
-        "ニュースサイトやSNSで頻繁に見かける",
         "今日のトレンドとして多くの人が注目",
         "ネット上で大きな話題を呼んでいる",
-        "各種メディアで報道されて注目の的",
-        "SNSのタイムラインで頻繁に流れてくる",
-        "今話題のキーワードとして急上昇中",
-        "ニュースやSNSで盛んに取り上げられている",
-        "多くの人が関心を寄せている話題",
-        "ネットニュースで連日報道されている",
         "SNSでバズっていて見逃せない",
-        "今最も注目されているトピックの一つ",
         "各メディアが競って報道している話題",
-        "ネット上で大きな関心を集めている",
     ]
     return random.choice(default_reasons)
 
@@ -72,77 +164,20 @@ def research_trend_reason(trend_data):
 def clean_article_title(title):
     """
     記事タイトルから不要なメタ情報を削除
-    
-    Args:
-        title: 記事タイトル
-    
-    Returns:
-        str: クリーンなタイトル
     """
-    # 改行を削除
     title = title.replace('\n', ' ')
-    
-    # ソース名のパターンを削除（括弧内）
-    # 例: （スポニチアネックス）、（Yahoo!ニュース）
     title = re.sub(r'[（(][^）)]*[）)]', '', title)
-    
-    # 時間情報を削除
-    # 例: "50 分前 ●"、"2 時間前 ●"、"昨日 ●"
     title = re.sub(r'\d+\s*[分時日]前\s*[●・]', '', title)
     title = re.sub(r'昨日\s*[●・]', '', title)
-    
-    # ニュースソース名を削除
-    # 例: "Yahoo!ニュース"、"ABEMA TIMES"
     title = re.sub(r'Yahoo!ニュース', '', title)
     title = re.sub(r'[A-Za-z\s]+TIMES', '', title)
     title = re.sub(r'スポニチアネックス', '', title)
     title = re.sub(r'日本テレビ', '', title)
     title = re.sub(r'RBC琉球放送', '', title)
     title = re.sub(r'リアルサウンド', '', title)
-    
-    # 連続する空白を1つに
     title = re.sub(r'\s+', ' ', title)
-    
-    # 前後の句読点や空白を削除
     title = title.strip('、。：:・ \t')
-    
     return title
-
-
-def extract_reason_from_title(title, trend_name):
-    """
-    記事タイトルから理由を抽出
-    
-    Args:
-        title: 記事タイトル
-        trend_name: トレンド名
-    
-    Returns:
-        str: 理由（簡潔に）
-    """
-    # トレンド名を除去
-    title = title.replace(trend_name, '').strip()
-    
-    # 理由を示すパターン
-    patterns = [
-        r'(.{2,20}?)(?:が|で|に|を|と)',  # 「〜が」「〜で」など
-        r'(.{2,20}?)(?:した|する|発表|公開|開催)',  # 動詞
-        r'(.{2,20}?)(?:話題|注目|人気)',  # 話題性
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, title)
-        if match:
-            reason = match.group(1).strip()
-            # 短すぎる or 長すぎる場合はスキップ
-            if 2 <= len(reason) <= 30:
-                return reason
-    
-    # パターンマッチしない場合、最初の20文字
-    if len(title) > 2:
-        return title[:20].strip()
-    
-    return None
 
 
 if __name__ == "__main__":
@@ -150,9 +185,7 @@ if __name__ == "__main__":
     test_trend = {
         'name': '仲間由紀恵',
         'traffic': '5万回以上の検索',
-        'articles': [
-            {'title': '仲間由紀恵、震災15年の今を見つめる特番に出演', 'url': 'https://example.com'}
-        ]
+        'articles': []
     }
     
     reason = research_trend_reason(test_trend)

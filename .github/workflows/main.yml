@@ -4,11 +4,17 @@ on:
   schedule:
     # 1日4回: 7:55, 11:55, 14:55, 17:55 (JST)
     # GitHub Actionsは UTC なので -9時間
-    - cron: '55 22 * * *'  # 7:55 JST (前日22:55 UTC)
-    - cron: '55 2 * * *'   # 11:55 JST
-    - cron: '55 5 * * *'   # 14:55 JST
-    - cron: '55 8 * * *'   # 17:55 JST
+    # Google Trends → X → Google Trends → X と交互に実行
+    - cron: '55 22 * * *'  # 7:55 JST (前日22:55 UTC) → Google Trends
+    - cron: '55 2 * * *'   # 11:55 JST → X Trends
+    - cron: '55 5 * * *'   # 14:55 JST → Google Trends
+    - cron: '55 8 * * *'   # 17:55 JST → X Trends
   workflow_dispatch:  # 手動実行用
+    inputs:
+      trend_source:
+        description: '情報源 (google_trends / x_trends)'
+        required: false
+        default: 'google_trends'
 
 jobs:
   trend-affi:
@@ -33,6 +39,25 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
       
+      - name: Determine trend source
+        id: source
+        run: |
+          # 手動実行の場合はinputから取得
+          if [ -n "${{ github.event.inputs.trend_source }}" ]; then
+            echo "TREND_SOURCE=${{ github.event.inputs.trend_source }}" >> $GITHUB_ENV
+            echo "Source: ${{ github.event.inputs.trend_source }} (manual)"
+          else
+            # スケジュール実行の場合は時刻で判定
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" = "22" ] || [ "$HOUR" = "05" ]; then
+              echo "TREND_SOURCE=google_trends" >> $GITHUB_ENV
+              echo "Source: google_trends (schedule)"
+            else
+              echo "TREND_SOURCE=x_trends" >> $GITHUB_ENV
+              echo "Source: x_trends (schedule)"
+            fi
+          fi
+      
       - name: Run Trend-Affi
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -43,4 +68,5 @@ jobs:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           GOOGLE_SHEET_KEY: ${{ secrets.GOOGLE_SHEET_KEY }}
         run: |
+          echo "Using trend source: $TREND_SOURCE"
           python main.py

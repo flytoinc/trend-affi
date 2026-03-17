@@ -45,10 +45,12 @@ class SheetsManager:
     def _init_sheets(self):
         """必要なシートを初期化"""
         required_sheets = {
-            'trendnews': ['scraped_at', 'trend_name', 'trend_reason', 'title', 'url', 'keywords', 'status', 'selected_product', 'notes'],
+            'trendnews': ['scraped_at', 'trend_name', 'trend_reason', 'title', 'url', 'keywords', 'status', 'selected_product', 'notes', 'source'],
             'posts': ['posted_at', 'news_url', 'news_title', 'product_title', 
                      'product_url', 'product_price', 'post_text', 'tweet_id',
                      'impressions', 'likes', 'retweets', 'replies', 'engagement_rate'],
+            'quote_retweets': ['quoted_at', 'trend_name', 'original_tweet_id', 'original_author',
+                              'original_text', 'quote_text', 'quote_tweet_id'],
             'config': ['key', 'value']
         }
         
@@ -86,7 +88,8 @@ class SheetsManager:
                     keywords_str,
                     'scraped',  # status
                     '',  # selected_product
-                    ''   # notes
+                    '',  # notes
+                    news.get('source', '')  # source (google_trends / x_trends)
                 ]
                 worksheet.append_row(row)
             
@@ -232,19 +235,65 @@ class SheetsManager:
             print(f"メトリクス更新エラー: {e}")
 
 
+    def get_pending_metrics_posts(self, hours_after_post=24):
+        """
+        エンゲージメントが未回収の投稿を取得
+        投稿後N時間以上経過し、impressionsが空の投稿
+        
+        Args:
+            hours_after_post: 投稿後何時間以上経過した投稿を対象にするか
+        
+        Returns:
+            list: 未回収の投稿レコードのリスト
+        """
+        try:
+            from datetime import timedelta
+            
+            worksheet = self.spreadsheet.worksheet('posts')
+            records = worksheet.get_all_records()
+            
+            cutoff_time = datetime.now() - timedelta(hours=hours_after_post)
+            pending = []
+            
+            for record in records:
+                posted_at_str = record.get('posted_at', '')
+                tweet_id = record.get('tweet_id', '')
+                impressions = record.get('impressions', '')
+                
+                if not posted_at_str or not tweet_id or tweet_id == 'DRY_RUN':
+                    continue
+                
+                # 既に回収済み（impressionsが入っている）ならスキップ
+                if impressions != '' and impressions != 0:
+                    continue
+                
+                try:
+                    posted_at = datetime.fromisoformat(posted_at_str)
+                    if posted_at <= cutoff_time:
+                        pending.append(record)
+                except:
+                    continue
+            
+            return pending
+            
+        except Exception as e:
+            print(f"未回収投稿取得エラー: {e}")
+            return []
     
     def get_recent_trends(self, hours=48):
         """
         過去N時間以内に投稿したトレンド名を取得
+        完全一致 + 正規化（スペース除去・小文字化）で重複を判定
         
         Args:
             hours: 何時間前までを対象とするか
         
         Returns:
-            set: トレンド名のセット
+            set: トレンド名のセット（原文 + 正規化済みの両方を含む）
         """
         try:
             from datetime import timedelta
+            import re
             
             worksheet = self.spreadsheet.worksheet('trendnews')
             records = worksheet.get_all_records()
@@ -263,6 +312,9 @@ class SheetsManager:
                     scraped_at = datetime.fromisoformat(scraped_at_str)
                     if scraped_at >= cutoff_time:
                         recent_trends.add(trend_name)
+                        # 正規化版も追加（スペース除去・小文字化）
+                        normalized = re.sub(r'\s+', '', trend_name).lower()
+                        recent_trends.add(normalized)
                 except:
                     continue
             
@@ -271,6 +323,64 @@ class SheetsManager:
             
         except Exception as e:
             print(f"過去トレンド取得エラー: {e}")
+            return set()
+
+    def record_quote_retweet(self, trend_name, original_tweet_id, original_author,
+                             original_text, quote_text, quote_tweet_id):
+        """引用リツイートを記録"""
+        try:
+            worksheet = self.spreadsheet.worksheet('quote_retweets')
+            row = [
+                datetime.now().isoformat(),
+                trend_name,
+                original_tweet_id,
+                original_author,
+                original_text[:200],
+                quote_text[:200],
+                quote_tweet_id
+            ]
+            worksheet.append_row(row)
+            print(f"引用RT記録完了: {trend_name}")
+        except Exception as e:
+            print(f"引用RT記録エラー: {e}")
+
+    def get_recent_quote_retweet_trends(self, hours=72):
+        """
+        過去N時間以内に引用RT済みのトレンド名を取得
+        
+        Returns:
+            set: 引用RT済みトレンド名のセット
+        """
+        try:
+            from datetime import timedelta
+            import re as re_mod
+            
+            worksheet = self.spreadsheet.worksheet('quote_retweets')
+            records = worksheet.get_all_records()
+            
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            quoted_trends = set()
+            
+            for record in records:
+                quoted_at_str = record.get('quoted_at', '')
+                trend_name = record.get('trend_name', '')
+                
+                if not quoted_at_str or not trend_name:
+                    continue
+                
+                try:
+                    quoted_at = datetime.fromisoformat(quoted_at_str)
+                    if quoted_at >= cutoff_time:
+                        quoted_trends.add(trend_name)
+                        normalized = re_mod.sub(r'\s+', '', trend_name).lower()
+                        quoted_trends.add(normalized)
+                except:
+                    continue
+            
+            return quoted_trends
+            
+        except Exception as e:
+            print(f"引用RT履歴取得エラー: {e}")
             return set()
 
 
