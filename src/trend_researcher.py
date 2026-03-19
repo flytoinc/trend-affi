@@ -5,6 +5,7 @@ Gemini APIを使用してトレンドの背景・理由をリアルタイムに�
 import os
 import re
 import random
+import time
 
 
 def research_trend_reason(trend_data):
@@ -72,31 +73,41 @@ def _research_with_gemini(trend_name):
 
 理由:"""
         
-        response = model.generate_content(prompt)
-        reason = response.text.strip()
+        # リトライロジック（429 対策）
+        for attempt in range(3):
+            try:
+                response = model.generate_content(prompt)
+                reason = response.text.strip()
+                
+                # 不要なプレフィックスを除去
+                reason = re.sub(r'^理由[:：]\s*', '', reason)
+                reason = reason.strip('"\'「」')
+                
+                # 長すぎる場合はトリム
+                if len(reason) > 150:
+                    cut_pos = reason[:150].rfind('。')
+                    if cut_pos > 50:
+                        reason = reason[:cut_pos + 1]
+                    else:
+                        reason = reason[:148] + '…'
+                
+                if len(reason) >= 10:
+                    print(f"  Gemini調査結果: {reason}")
+                    return reason
+                
+                return None
+                
+            except Exception as e:
+                error_msg = str(e)
+                if '429' in error_msg or 'quota' in error_msg.lower():
+                    wait = 10 * (attempt + 1)
+                    print(f"  Gemini クォータ制限 (試行 {attempt+1}/3): {wait}秒待機...")
+                    time.sleep(wait)
+                    continue
+                print(f"  Geminiトレンド調査エラー: {e}")
+                break
         
-        # 不要なプレフィックスを除去
-        reason = re.sub(r'^理由[:：]\s*', '', reason)
-        reason = reason.strip('"\'「」')
-        
-        # 長すぎる場合はトリム
-        if len(reason) > 150:
-            # 文末を探してカット
-            cut_pos = reason[:150].rfind('。')
-            if cut_pos > 50:
-                reason = reason[:cut_pos + 1]
-            else:
-                reason = reason[:148] + '…'
-        
-        if len(reason) >= 10:
-            print(f"  Gemini調査結果: {reason}")
-            return reason
-        
-        return None
-        
-    except Exception as e:
-        print(f"  Geminiトレンド調査エラー: {e}")
-        # google_search_retrieval が使えない場合、通常モデルで試行
+        # リトライ全失敗 or 非429エラー
         return _research_with_gemini_fallback(trend_name)
 
 
@@ -122,25 +133,36 @@ def _research_with_gemini_fallback(trend_name):
 
 理由:"""
         
-        response = model.generate_content(prompt)
-        reason = response.text.strip()
-        reason = re.sub(r'^理由[:：]\s*', '', reason)
-        reason = reason.strip('"\'「」')
+        # リトライロジック（429 対策）
+        for attempt in range(2):
+            try:
+                response = model.generate_content(prompt)
+                reason = response.text.strip()
+                reason = re.sub(r'^理由[:：]\s*', '', reason)
+                reason = reason.strip('"\'「」')
+                
+                if len(reason) > 150:
+                    cut_pos = reason[:150].rfind('。')
+                    if cut_pos > 50:
+                        reason = reason[:cut_pos + 1]
+                    else:
+                        reason = reason[:148] + '…'
+                
+                if len(reason) >= 10:
+                    return reason
+                
+                return None
+                
+            except Exception as e:
+                error_msg = str(e)
+                if '429' in error_msg or 'quota' in error_msg.lower():
+                    wait = 15 * (attempt + 1)
+                    print(f"  Gemini フォールバッククォータ制限 ({attempt+1}/2): {wait}秒待機...")
+                    time.sleep(wait)
+                    continue
+                print(f"  Geminiフォールバック調査エラー: {e}")
+                break
         
-        if len(reason) > 150:
-            cut_pos = reason[:150].rfind('。')
-            if cut_pos > 50:
-                reason = reason[:cut_pos + 1]
-            else:
-                reason = reason[:148] + '…'
-        
-        if len(reason) >= 10:
-            return reason
-        
-        return None
-        
-    except Exception as e:
-        print(f"  Geminiフォールバック調査エラー: {e}")
         return None
 
 

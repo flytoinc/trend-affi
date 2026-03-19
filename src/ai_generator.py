@@ -2,10 +2,12 @@
 AI投稿生成
 Gemini APIを使用してX投稿を生成
 個性的なキャラクター設定と多様な文体で自然な投稿を実現
+API quota対策: リトライ + 充実したフォールバック
 """
 import os
 import random
 import re
+import time
 import google.generativeai as genai
 
 
@@ -97,57 +99,83 @@ def generate_post(trend_data, product, learning_insights=""):
 
 投稿文:"""
 
-    try:
-        response = model.generate_content(prompt)
-        post_text = response.text.strip()
-        
-        # 不要な引用符やマーカーを除去
-        post_text = post_text.strip('"\'"「」')
-        post_text = re.sub(r'^投稿文[:：]\s*', '', post_text)
-        
-        # prが含まれていない場合は追加
-        if 'pr' not in post_text.lower():
-            post_text += "\n\npr"
-        
-        # アフィリエイトURL追加
-        affiliate_url = product.get('affiliate_url', product.get('url', ''))
-        post_text = f"{post_text}\n\n{affiliate_url}"
-        
-        print(f"Gemini投稿生成完了（{len(post_text)}文字, スタイル: {selected_style[:10]}）")
-        return post_text
-        
-    except Exception as e:
-        print(f"Gemini API エラー: {e}")
-        return _generate_fallback(trend_data, product)
+    # リトライロジック（429 quota exceeded 対策）
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            post_text = response.text.strip()
+            
+            # 不要な引用符やマーカーを除去
+            post_text = post_text.strip('"\'"「」')
+            post_text = re.sub(r'^投稿文[:：]\s*', '', post_text)
+            
+            # prが含まれていない場合は追加
+            if 'pr' not in post_text.lower():
+                post_text += "\n\npr"
+            
+            # アフィリエイトURL追加
+            affiliate_url = product.get('affiliate_url', product.get('url', ''))
+            post_text = f"{post_text}\n\n{affiliate_url}"
+            
+            print(f"Gemini投稿生成完了（{len(post_text)}文字, スタイル: {selected_style[:10]}）")
+            return post_text
+            
+        except Exception as e:
+            error_msg = str(e)
+            if '429' in error_msg or 'quota' in error_msg.lower():
+                wait = 10 * (attempt + 1)
+                print(f"Gemini API クォータ制限 (試行 {attempt+1}/{max_retries}): {wait}秒待機...")
+                time.sleep(wait)
+                continue
+            print(f"Gemini API エラー: {e}")
+            break
+    
+    print("→ フォールバックテンプレートを使用")
+    return _generate_fallback(trend_data, product)
 
 
 def _generate_fallback(trend_data, product):
     """
-    Gemini API が使えない場合のフォールバック（固定テンプレート）
+    Gemini API が使えない場合のフォールバック
+    多彩なテンプレートでbot感を回避
     """
     trend_name = trend_data.get('name', 'トレンド')
     trend_reason = trend_data.get('reason', '話題')
     
     product_title = product['title'].replace('US$', '').replace('$', '').strip()
     product_title = re.sub(r'\s+', ' ', product_title)
+    # 商品名を短くする
+    short_product = product_title[:30] + ('...' if len(product_title) > 30 else '')
+    price = product.get('price', 0)
     
+    # 投稿パターン群（毎回違う文体になるよう大量に用意）
     templates = [
-        "「{name}」が話題だね。{reason}......なんだって。そんな{name}の激レア商品はこちら。",
-        "「{name}」がトレンド入り。{reason}......らしい。関連商品をメルカリで見つけたよ。",
-        "話題の「{name}」。{reason}......みたい。メルカリにレアなアイテムがあったから紹介するね。",
-    ]
-    
-    closing_phrases = [
-        "貴重なものなので、急いで。",
-        "在庫わずかだから、お早めに。",
-        "気になる人はチェックしてみて。",
+        # 驚き系
+        f"え、「{trend_name}」の関連グッズがメルカリにあった。{short_product}、¥{price:,}は気になる",
+        f"「{trend_name}」調べてたらメルカリで面白いの見つけた\n\n{short_product}（¥{price:,}）",
+        f"ちょ、{trend_name}関連でこれ見つけちゃった👀\n{short_product}",
+        # 独り言系
+        f"メルカリ見てたら{trend_name}関連のやつ出てきた。{short_product}...買おうかな",
+        f"{trend_name}、気になったからメルカリ検索したら良さげなの発見。\n{short_product}（¥{price:,}）",
+        f"{trend_name}の便乗じゃないけど、こういうの好きなんだよね\n{short_product}",
+        # ニュース系
+        f"今日の話題「{trend_name}」\n{trend_reason[:40]}\n\n関連してこれ↓\n{short_product}",
+        f"{trend_name}が盛り上がってる中、メルカリで掘り出し物を発見\n\n{short_product} ¥{price:,}",
+        # 紹介系
+        f"「{trend_name}」好きな人、これ知ってる？\n\n{short_product}がメルカリに出てた（¥{price:,}）",
+        f"{trend_name}ファンに教えたい。メルカリで見つけた\n{short_product}",
+        f"今{trend_name}で検索すると面白い。メルカリにもこんなのあった\n{short_product} ¥{price:,}",
+        # カジュアル系
+        f"あ、これいいかも。{trend_name}つながりで\n{short_product}（¥{price:,}）",
+        f"{trend_name}×メルカリで検索した結果 → {short_product} が出てきた。意外と安い",
+        f"ふと{trend_name}で検索してみたら{short_product}に辿り着いた。レア？",
+        f"今日のメルカリ散歩（{trend_name}編）\n\n見つけたもの: {short_product} ¥{price:,}",
     ]
     
     template = random.choice(templates)
-    closing = random.choice(closing_phrases)
-    main_text = template.format(name=trend_name, reason=trend_reason[:50])
     
-    post_text = f"""{main_text}{closing}
+    post_text = f"""{template}
 
 pr
 
