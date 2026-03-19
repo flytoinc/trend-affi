@@ -2,6 +2,7 @@
 エンゲージメント自動回収
 投稿後24時間以上経過した投稿のインプレッション・いいね・RT・リプライを
 X APIで取得し、スプレッドシートに反映する
+注意: public_metricsは X API Basicプラン以上が必要。Freeプランでは401/403エラーになる
 """
 import os
 import tweepy
@@ -87,6 +88,14 @@ def update_pending_metrics(sheets_manager, hours_after_post=24, max_updates=20):
                 })
                 updated_count += 1
                 
+        except tweepy.Unauthorized:
+            print(f"  ⚠️ 401 Unauthorized: X API Basicプラン以上が必要です")
+            print(f"  → エンゲージメント回収をスキップします")
+            break
+        except tweepy.Forbidden:
+            print(f"  ⚠️ 403 Forbidden: API権限が不足しています")
+            print(f"  → エンゲージメント回収をスキップします")
+            break
         except tweepy.TooManyRequests:
             print(f"  ⚠️ レート制限に到達。ここまでの更新: {updated_count}件")
             break
@@ -97,6 +106,12 @@ def update_pending_metrics(sheets_manager, hours_after_post=24, max_updates=20):
             })
             updated_count += 1
         except Exception as e:
+            error_msg = str(e)
+            # 401/403の別形式キャッチ
+            if '401' in error_msg or '403' in error_msg:
+                print(f"  ⚠️ API権限エラー: {e}")
+                print(f"  → エンゲージメント回収をスキップ")
+                break
             print(f"  ✗ {tweet_id}: エラー - {e}")
             continue
     

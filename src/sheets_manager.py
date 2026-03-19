@@ -101,20 +101,34 @@ class SheetsManager:
     def update_news_status(self, news_url, status, product_title='', notes=''):
         """
         ニュースのステータスを更新
-        
-        Args:
-            news_url: ニュースURL
-            status: 'scraped', 'selected', 'posted', 'skipped'
-            product_title: 選択された商品名
-            notes: メモ
+        空ヘッダー/重複ヘッダー対策済み
         """
         try:
             worksheet = self.spreadsheet.worksheet('trendnews')
-            records = worksheet.get_all_records()
+            # get_all_records はヘッダー重複でエラーになるので get_all_values を使用
+            all_values = worksheet.get_all_values()
+            if len(all_values) < 2:
+                return
             
-            for i, record in enumerate(records, start=2):
-                if record.get('url') == news_url:
-                    worksheet.update(f'E{i}:G{i}', [[status, product_title, notes]])
+            headers = all_values[0]
+            # url列のインデックスを探す
+            url_col = None
+            status_col = None
+            for i, h in enumerate(headers):
+                if h == 'url':
+                    url_col = i
+                elif h == 'status':
+                    status_col = i
+            
+            if url_col is None:
+                return
+            
+            for row_idx, row in enumerate(all_values[1:], start=2):
+                if row_idx > len(all_values):
+                    break
+                if len(row) > url_col and row[url_col] == news_url:
+                    if status_col is not None:
+                        worksheet.update_cell(row_idx, status_col + 1, status)
                     print(f"ニュースステータス更新: {status}")
                     return
             
